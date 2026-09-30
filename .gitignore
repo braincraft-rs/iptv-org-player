@@ -1,0 +1,38 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Packaging output
+/dist/
+*.dmg
+*.AppImage
+*.msi
+
+# Bundled native libs (fetched by build scripts, not committed)
+/vendor/libmpv/
+
+# Logs & debug
+*.log
+
+# Local data (synced channel cache, favourites DB)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# Claude Code local settings
+.claude/settings.local.json
