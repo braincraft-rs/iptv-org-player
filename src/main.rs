@@ -3,6 +3,7 @@ mod db;
 mod model;
 mod player;
 mod sync;
+mod ui;
 
 fn main() -> eframe::Result {
     tracing_subscriber::fmt()

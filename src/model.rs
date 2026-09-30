@@ -33,3 +33,15 @@ pub struct Catalog {
     pub channels: Vec<Channel>,
     pub streams: Vec<Stream>,
 }
+
+/// A channel as shown in the browser list (read back from the database).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowseChannel {
+    pub id: String,
+    pub name: String,
+    pub country_code: String,
+    pub categories: Vec<String>,
+    pub is_nsfw: bool,
+    pub logo_url: Option<String>,
+    pub stream_count: usize,
+}

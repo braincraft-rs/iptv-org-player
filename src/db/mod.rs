@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result};
 use rusqlite::{Connection, params};
 
-use crate::model::Catalog;
+use crate::model::{BrowseChannel, Catalog, Country};
 
 /// Ordered migrations; `PRAGMA user_version` holds how many were applied.
 const MIGRATIONS: &[&str] = &[
@@ -161,6 +161,44 @@ impl Db {
         })
     }
 
+    /// All countries and channels for the browser, channels sorted by name.
+    pub fn browse_data(&self) -> Result<(Vec<Country>, Vec<BrowseChannel>)> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT code, name, flag FROM country ORDER BY name COLLATE NOCASE")?;
+        let countries = stmt
+            .query_map([], |r| {
+                Ok(Country {
+                    code: r.get(0)?,
+                    name: r.get(1)?,
+                    flag: r.get(2)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let mut stmt = self.conn.prepare(
+            "SELECT ch.id, ch.name, ch.country_code, ch.categories, ch.is_nsfw, ch.logo_url,
+                    (SELECT COUNT(*) FROM stream s WHERE s.channel_id = ch.id)
+             FROM channel ch ORDER BY ch.name COLLATE NOCASE",
+        )?;
+        let channels = stmt
+            .query_map([], |r| {
+                let categories: String = r.get(3)?;
+                let count: i64 = r.get(6)?;
+                Ok(BrowseChannel {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    country_code: r.get(2)?,
+                    categories: serde_json::from_str(&categories).unwrap_or_default(),
+                    is_nsfw: r.get(4)?,
+                    logo_url: r.get(5)?,
+                    stream_count: count as usize,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok((countries, channels))
+    }
+
     pub fn last_synced_at(&self) -> Result<Option<String>> {
         self.get_setting("last_synced_at")
     }
@@ -263,6 +301,17 @@ mod tests {
         assert_eq!(db.counts().unwrap().channels, 1);
         assert_eq!(db.favourite_ids().unwrap(), ["ch1"]);
         assert_eq!(db.get_setting("volume").unwrap().as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn browse_data_returns_channels_with_stream_counts() {
+        let mut db = Db::open_in_memory().unwrap();
+        db.replace_catalog(&catalog(2)).unwrap();
+        let (countries, channels) = db.browse_data().unwrap();
+        assert_eq!(countries.len(), 1);
+        assert_eq!(channels.len(), 2);
+        assert_eq!(channels[0].stream_count, 1);
+        assert_eq!(channels[0].categories, ["news"]);
     }
 
     #[test]

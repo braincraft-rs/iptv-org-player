@@ -4,6 +4,7 @@ use std::sync::mpsc::{self, Receiver};
 use crate::db::{self, Counts, Db};
 use crate::player::{Player, PlayerStatus, StreamSpec};
 use crate::sync::{self, SyncMsg};
+use crate::ui::browser::ChannelBrowser;
 
 /// Public HLS test stream used by the M1 playback spike.
 const TEST_URL: &str = "https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8";
@@ -16,6 +17,7 @@ pub struct App {
     sync_rx: Option<Receiver<SyncMsg>>,
     sync_status: String,
     egui_ctx: egui::Context,
+    browser: ChannelBrowser,
     player: Option<Player>,
     init_error: Option<String>,
     url: String,
@@ -54,6 +56,7 @@ impl App {
                 .map(|e| format!("Database error: {e}"))
                 .unwrap_or_default(),
             egui_ctx: cc.egui_ctx.clone(),
+            browser: ChannelBrowser::default(),
             player,
             init_error,
             url,
@@ -62,7 +65,9 @@ impl App {
             volume: 70.0,
             muted: false,
         };
+        egui_extras::install_image_loaders(&cc.egui_ctx);
         app.refresh_counts();
+        app.load_browser();
         app.apply_volume();
         app.play_current();
         // Debug hook for headless verification of the sync pipeline.
@@ -70,6 +75,17 @@ impl App {
             app.start_sync();
         }
         app
+    }
+
+    /// Reload countries/channels from the database into the browser list.
+    fn load_browser(&mut self) {
+        let Some(db) = &self.db else { return };
+        let show_nsfw = db.get_setting("show_nsfw").ok().flatten().as_deref() == Some("1");
+        self.browser.set_show_nsfw(show_nsfw);
+        match db.browse_data() {
+            Ok((countries, channels)) => self.browser.set_data(countries, channels),
+            Err(e) => self.sync_status = format!("Could not load channels: {e:#}"),
+        }
     }
 
     fn refresh_counts(&mut self) {
@@ -112,6 +128,7 @@ impl App {
         if finished {
             self.sync_rx = None;
             self.refresh_counts();
+            self.load_browser();
         }
     }
 
@@ -172,6 +189,16 @@ impl eframe::App for App {
             });
         });
 
+        egui::Panel::left("channels")
+            .default_size(340.0)
+            .size_range(260.0..=520.0)
+            .show(ui, |ui| {
+                let ev = self.browser.ui(ui);
+                if let (Some(on), Some(db)) = (ev.nsfw_changed, &self.db) {
+                    let _ = db.set_setting("show_nsfw", if on { "1" } else { "0" });
+                }
+            });
+
         egui::Panel::top("spike_controls").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label("URL");
@@ -203,6 +230,18 @@ impl eframe::App for App {
                     ui.label(format!("{:?}", p.status()));
                 }
             });
+            if let Some(ch) = self.browser.selected_channel() {
+                ui.label(format!(
+                    "Selected: {} ({} stream(s)){}",
+                    ch.name,
+                    ch.stream_count,
+                    if ch.categories.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" · {}", ch.categories.join(", "))
+                    }
+                ));
+            }
         });
 
         egui::CentralPanel::default().show(ui, |ui| {
