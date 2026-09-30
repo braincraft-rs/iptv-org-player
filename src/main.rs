@@ -1,5 +1,8 @@
 mod app;
+mod db;
+mod model;
 mod player;
+mod sync;
 
 fn main() -> eframe::Result {
     tracing_subscriber::fmt()

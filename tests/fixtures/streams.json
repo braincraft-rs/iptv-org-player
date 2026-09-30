@@ -1,0 +1,10 @@
+[
+  {"channel": "HRT1.hr", "feed": null, "title": "HRT 1", "url": "https://example.com/hrt1/hd.m3u8", "quality": "1080p", "labels": [], "user_agent": null, "referrer": null},
+  {"channel": "HRT1.hr", "feed": null, "title": "HRT 1", "url": "http://example.com/hrt1/sd.m3u8", "quality": "480p", "labels": [], "user_agent": "TestUA", "referrer": "https://hrt.hr/"},
+  {"channel": "HRT1.hr", "feed": null, "title": "HRT 1 dup", "url": "https://example.com/hrt1/hd.m3u8", "quality": "1080p", "labels": [], "user_agent": null, "referrer": null},
+  {"channel": "Old.hr", "feed": null, "title": "Old", "url": "https://example.com/old.m3u8", "quality": null, "labels": [], "user_agent": null, "referrer": null},
+  {"channel": "Spicy.af", "feed": null, "title": "Spicy", "url": "https://example.com/spicy.m3u8", "quality": null, "labels": [], "user_agent": null, "referrer": null},
+  {"channel": null, "feed": null, "title": "Orphan", "url": "https://example.com/orphan.m3u8", "quality": null, "labels": [], "user_agent": null, "referrer": null},
+  {"channel": "Missing.xx", "feed": null, "title": "Unknown channel", "url": "https://example.com/missing.m3u8", "quality": null, "labels": [], "user_agent": null, "referrer": null},
+  {"channel": "HRT1.hr", "feed": null, "title": "Bad scheme", "url": "rtmp://example.com/live", "quality": null, "labels": [], "user_agent": null, "referrer": null}
+]

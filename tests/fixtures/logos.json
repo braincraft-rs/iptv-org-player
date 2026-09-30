@@ -1,0 +1,6 @@
+[
+  {"channel": "HRT1.hr", "feed": null, "in_use": true, "tags": [], "width": 100, "height": 100, "format": "PNG", "url": "https://example.com/small.png"},
+  {"channel": "HRT1.hr", "feed": null, "in_use": true, "tags": [], "width": 500, "height": 500, "format": "PNG", "url": "https://example.com/large.png"},
+  {"channel": "HRT1.hr", "feed": null, "in_use": false, "tags": [], "width": 900, "height": 900, "format": "PNG", "url": "https://example.com/unused.png"},
+  {"channel": "Spicy.af", "feed": null, "in_use": true, "tags": [], "width": null, "height": null, "format": null, "url": "https://example.com/nosize.png"}
+]

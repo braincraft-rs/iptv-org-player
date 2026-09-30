@@ -1,0 +1,6 @@
+[
+  {"id": "HRT1.hr", "name": "HRT 1", "alt_names": [], "network": null, "owners": [], "country": "HR", "categories": ["general"], "is_nsfw": false, "launched": null, "closed": null, "replaced_by": null, "website": "https://hrt.hr"},
+  {"id": "Old.hr", "name": "Old Channel", "alt_names": [], "network": null, "owners": [], "country": "HR", "categories": [], "is_nsfw": false, "launched": null, "closed": "2020-01-01", "replaced_by": null, "website": null},
+  {"id": "Spicy.af", "name": "Spicy", "alt_names": [], "network": null, "owners": [], "country": "AF", "categories": ["xxx"], "is_nsfw": true, "launched": null, "closed": null, "replaced_by": null, "website": null},
+  {"id": "NoStreams.af", "name": "No Streams", "alt_names": [], "network": null, "owners": [], "country": "AF", "categories": [], "is_nsfw": false, "launched": null, "closed": null, "replaced_by": null, "website": null}
+]
