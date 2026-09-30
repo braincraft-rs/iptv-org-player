@@ -1,7 +1,7 @@
 //! Download the iptv-org JSON API files and join them into a [`Catalog`].
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
@@ -157,7 +157,7 @@ pub fn join(countries: &[u8], channels: &[u8], streams: &[u8], logos: &[u8]) -> 
             logo_url: best_logo.get(c.id.as_str()).map(|(_, u)| (*u).to_string()),
         })
         .collect();
-    channels_out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    channels_out.sort_by_key(|c| c.name.to_lowercase());
 
     let countries_out = raw_countries
         .into_iter()
@@ -193,7 +193,7 @@ async fn fetch(client: &reqwest::Client, file: &str) -> Result<Vec<u8>> {
         .to_vec())
 }
 
-async fn run(db_path: &PathBuf, tx: &Sender<SyncMsg>) -> Result<SyncSummary> {
+async fn run(db_path: &Path, tx: &Sender<SyncMsg>) -> Result<SyncSummary> {
     let send = |m: &str| {
         let _ = tx.send(SyncMsg::Progress(m.to_string()));
     };
@@ -216,7 +216,7 @@ async fn run(db_path: &PathBuf, tx: &Sender<SyncMsg>) -> Result<SyncSummary> {
             .await??;
 
     send("Saving...");
-    let path = db_path.clone();
+    let path = db_path.to_path_buf();
     let summary = tokio::task::spawn_blocking(move || -> Result<SyncSummary> {
         let mut db = Db::open(&path)?;
         db.replace_catalog(&catalog)?;

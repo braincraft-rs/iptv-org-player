@@ -65,6 +65,7 @@ pub struct ChannelBrowser {
     favourites: HashSet<String>,
     /// Favourite ids with no matching channel, in the current `visible` list.
     missing: Vec<String>,
+    focus_search: bool,
 }
 
 impl ChannelBrowser {
@@ -109,6 +110,11 @@ impl ChannelBrowser {
         self.channels = channels;
         self.groups = groups;
         self.rebuild();
+    }
+
+    /// Put the cursor in the search box on the next frame.
+    pub fn focus_search(&mut self) {
+        self.focus_search = true;
     }
 
     pub fn set_favourites(&mut self, ids: impl IntoIterator<Item = String>) {
@@ -194,6 +200,9 @@ impl ChannelBrowser {
                 .hint_text("Search channels or countries")
                 .desired_width(f32::INFINITY),
         );
+        if std::mem::take(&mut self.focus_search) {
+            search.request_focus();
+        }
         if search.changed() {
             dirty = true;
         }

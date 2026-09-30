@@ -28,6 +28,9 @@ pub struct App {
     db: Option<Db>,
     counts: Option<Counts>,
     last_synced: Option<String>,
+    hours_since_sync: Option<f64>,
+    fullscreen: bool,
+    show_about: bool,
     sync_rx: Option<Receiver<SyncMsg>>,
     sync_status: String,
     egui_ctx: egui::Context,
@@ -68,6 +71,9 @@ impl App {
             db,
             counts: None,
             last_synced: None,
+            hours_since_sync: None,
+            fullscreen: false,
+            show_about: false,
             sync_rx: None,
             sync_status: db_err
                 .map(|e| format!("Database error: {e}"))
@@ -113,6 +119,7 @@ impl App {
         if let Some(db) = &self.db {
             self.counts = db.counts().ok();
             self.last_synced = db.last_synced_at().ok().flatten();
+            self.hours_since_sync = db.hours_since_sync().ok().flatten();
         }
     }
 
@@ -227,6 +234,120 @@ impl App {
         }
     }
 
+    fn toggle_pause(&mut self) {
+        if self.now.is_none() {
+            return;
+        }
+        self.paused = !self.paused;
+        if let Some(p) = &self.player {
+            p.set_paused(self.paused);
+        }
+    }
+
+    fn set_volume_by(&mut self, delta: f32) {
+        self.volume = (self.volume + delta).clamp(0.0, 100.0);
+        if self.volume > 0.0 {
+            self.muted = false;
+        }
+        self.apply_volume();
+        self.save_audio_settings();
+    }
+
+    fn toggle_mute(&mut self) {
+        self.muted = !self.muted;
+        self.apply_volume();
+        self.save_audio_settings();
+    }
+
+    fn set_fullscreen(&mut self, ctx: &egui::Context, on: bool) {
+        self.fullscreen = on;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
+    }
+
+    /// Space pause, M mute, Up/Down volume, F fullscreen, Esc leave
+    /// fullscreen, / search. Ignored while typing in a text field.
+    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.egui_wants_keyboard_input() {
+            return;
+        }
+        use egui::{Key, Modifiers};
+        let pressed =
+            |ctx: &egui::Context, key| ctx.input_mut(|i| i.consume_key(Modifiers::NONE, key));
+        if pressed(ctx, Key::Space) {
+            self.toggle_pause();
+        }
+        if pressed(ctx, Key::M) {
+            self.toggle_mute();
+        }
+        if pressed(ctx, Key::ArrowUp) {
+            self.set_volume_by(5.0);
+        }
+        if pressed(ctx, Key::ArrowDown) {
+            self.set_volume_by(-5.0);
+        }
+        if pressed(ctx, Key::F) {
+            self.set_fullscreen(ctx, !self.fullscreen);
+        }
+        if pressed(ctx, Key::Escape) && self.fullscreen {
+            self.set_fullscreen(ctx, false);
+        }
+        if pressed(ctx, Key::Slash) {
+            if self.fullscreen {
+                self.set_fullscreen(ctx, false);
+            }
+            self.browser.focus_search();
+        }
+    }
+
+    fn about_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.show_about;
+        egui::Window::new("About IPTV-Org Player")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(460.0)
+            .show(ctx, |ui| {
+                ui.heading(format!("IPTV-Org Player {}", env!("CARGO_PKG_VERSION")));
+                ui.label("A simple desktop player for the public iptv-org channel lists.");
+                ui.hyperlink_to(
+                    "iptv-org/iptv on GitHub",
+                    "https://github.com/iptv-org/iptv",
+                );
+                ui.separator();
+                ui.label(
+                    "Disclaimer: this is a non-profit project made for learning purposes. \
+                     The author has no affiliation with iptv-org or with any stream, \
+                     broadcaster or channel. The app does not host, store or distribute any \
+                     video content; it lists links published in the public iptv-org \
+                     repository and plays streams directly from their original sources. \
+                     Availability, content and legality in your jurisdiction are the \
+                     responsibility of the stream owners and of you as the viewer.",
+                );
+                ui.separator();
+                ui.strong("Keyboard shortcuts");
+                egui::Grid::new("shortcuts").num_columns(2).show(ui, |ui| {
+                    for (k, d) in [
+                        ("Space", "Pause / resume"),
+                        ("M", "Mute"),
+                        ("↑ / ↓", "Volume +5 / -5"),
+                        ("F or double-click video", "Fullscreen"),
+                        ("Esc", "Leave fullscreen"),
+                        ("/", "Search channels"),
+                    ] {
+                        ui.monospace(k);
+                        ui.label(d);
+                        ui.end_row();
+                    }
+                });
+                ui.separator();
+                if let Some(path) = &self.db_path {
+                    ui.label(format!("Data: {}", path.display()));
+                }
+                ui.label("Code: MIT License, BrainCraft.rs. Playback by libmpv.");
+            });
+        self.show_about = open;
+    }
+
     fn stop(&mut self) {
         self.now = None;
         self.paused = false;
@@ -295,7 +416,21 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.poll_sync();
         self.update_playback();
+        let ctx = ui.ctx().clone();
+        self.handle_shortcuts(&ctx);
+        self.about_window(&ctx);
 
+        if !self.fullscreen {
+            self.top_and_side_panels(ui);
+        }
+        self.controls_bar(ui);
+
+        egui::CentralPanel::default().show(ui, |ui| self.video_area(ui, frame));
+    }
+}
+
+impl App {
+    fn top_and_side_panels(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("sync_bar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 let syncing = self.sync_rx.is_some();
@@ -322,6 +457,22 @@ impl eframe::App for App {
                 if let Some(t) = &self.last_synced {
                     ui.label(format!("(last sync {t} UTC)"));
                 }
+                if let Some(h) = self.hours_since_sync
+                    && h > 24.0
+                {
+                    ui.colored_label(
+                        Color32::from_rgb(230, 190, 90),
+                        format!(
+                            "⚠ list is {} day(s) old, sync to refresh",
+                            (h / 24.0) as u32
+                        ),
+                    );
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("About").clicked() {
+                        self.show_about = true;
+                    }
+                });
             });
         });
 
@@ -342,14 +493,8 @@ impl eframe::App for App {
                     self.play_channel(&id, &name);
                 }
             });
-
-        self.controls_bar(ui);
-
-        egui::CentralPanel::default().show(ui, |ui| self.video_area(ui, frame));
     }
-}
 
-impl App {
     fn controls_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::bottom("controls").show(ui, |ui| {
             ui.add_space(4.0);
@@ -466,6 +611,15 @@ impl App {
 
         // Overlay: what is going on.
         let status = p.status().clone();
+
+        if ui
+            .interact(rect, ui.id().with("video"), egui::Sense::click())
+            .double_clicked()
+        {
+            let ctx = ui.ctx().clone();
+            self.set_fullscreen(&ctx, !self.fullscreen);
+        }
+
         let painter = ui.painter_at(rect);
         let text = |y: f32, s: &str, size: f32, color: Color32| {
             painter.text(

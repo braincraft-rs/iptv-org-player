@@ -221,6 +221,16 @@ impl Db {
         Ok(streams)
     }
 
+    /// Hours since the last successful sync (None if never synced).
+    pub fn hours_since_sync(&self) -> Result<Option<f64>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT (julianday('now') - julianday(value)) * 24.0
+             FROM setting WHERE key = 'last_synced_at'",
+        )?;
+        let mut rows = stmt.query([])?;
+        Ok(rows.next()?.map(|r| r.get(0)).transpose()?)
+    }
+
     pub fn last_synced_at(&self) -> Result<Option<String>> {
         self.get_setting("last_synced_at")
     }
@@ -345,6 +355,15 @@ mod tests {
         assert_eq!(channels.len(), 2);
         assert_eq!(channels[0].stream_count, 1);
         assert_eq!(channels[0].categories, ["news"]);
+    }
+
+    #[test]
+    fn hours_since_sync_is_none_until_synced() {
+        let mut db = Db::open_in_memory().unwrap();
+        assert!(db.hours_since_sync().unwrap().is_none());
+        db.replace_catalog(&catalog(1)).unwrap();
+        let h = db.hours_since_sync().unwrap().unwrap();
+        assert!((0.0..0.1).contains(&h));
     }
 
     #[test]

@@ -4,7 +4,7 @@ A simple, cross-platform desktop IPTV player written in Rust. It syncs the publi
 lists from [iptv-org/iptv](https://github.com/iptv-org/iptv), groups them by country, and lets
 you watch a channel, star your favourites and control the volume.
 
-> **Status:** planning. No application code yet. See [docs/PLAN.md](docs/PLAN.md).
+> **Status:** working app (milestones M0-M6 done). Packaged releases (M7) are not available yet. See [docs/PLAN.md](docs/PLAN.md).
 
 ## Features (MVP)
 
@@ -58,13 +58,32 @@ iptv-org-player/
 
 ## Getting started
 
-Not available yet. Prerequisites once implemented:
+Prerequisites: Rust stable (`rustup`) and libmpv.
 
-- Rust stable (`rustup`)
-- libmpv development files:
-  - macOS: `brew install mpv`
-  - Debian/Ubuntu: `sudo apt install libmpv-dev`
-  - Windows: mpv dev build (`libmpv-2.dll` + import lib), see the build docs once added
+- macOS: `brew install mpv pkg-config`
+- Debian/Ubuntu: `sudo apt install libmpv-dev`
+- Windows: mpv dev build (`libmpv-2.dll` + import lib); not tested yet
+
+```bash
+cargo run --release
+```
+
+On first start click **Sync** to download the channel list (about 30 seconds). Then expand a
+country and click a channel to play it. Click the star to add a favourite.
+
+### Keyboard shortcuts
+
+| Key | Action |
+|---|---|
+| Space | Pause / resume |
+| M | Mute |
+| Up / Down | Volume +5 / -5 |
+| F or double-click video | Fullscreen |
+| Esc | Leave fullscreen |
+| / | Search channels |
+
+Data (channel cache, favourites, settings) is stored in a SQLite file in your OS data directory
+(on macOS: `~/Library/Application Support/rs.BrainCraft.iptv-org-player/iptv.db`).
 
 ## Disclaimer
 
