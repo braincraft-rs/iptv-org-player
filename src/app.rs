@@ -100,6 +100,9 @@ impl App {
         let Some(db) = &self.db else { return };
         let show_nsfw = db.get_setting("show_nsfw").ok().flatten().as_deref() == Some("1");
         self.browser.set_show_nsfw(show_nsfw);
+        if let Ok(ids) = db.favourite_ids() {
+            self.browser.set_favourites(ids);
+        }
         match db.browse_data() {
             Ok((countries, channels)) => self.browser.set_data(countries, channels),
             Err(e) => self.sync_status = format!("Could not load channels: {e:#}"),
@@ -133,8 +136,10 @@ impl App {
             match msg {
                 SyncMsg::Progress(s) => self.sync_status = s,
                 SyncMsg::Done(s) => {
-                    self.sync_status =
-                        format!("Synced {} channels, {} streams", s.channels, s.streams);
+                    self.sync_status = format!(
+                        "Synced {} channels in {} countries, {} streams",
+                        s.channels, s.countries, s.streams
+                    );
                     tracing::info!(?s, "sync done");
                     finished = true;
                 }
@@ -327,6 +332,11 @@ impl eframe::App for App {
                 let ev = self.browser.ui(ui);
                 if let (Some(on), Some(db)) = (ev.nsfw_changed, &self.db) {
                     let _ = db.set_setting("show_nsfw", if on { "1" } else { "0" });
+                }
+                if let (Some((id, on)), Some(db)) = (ev.favourite_toggled, &self.db)
+                    && let Err(e) = db.set_favourite(&id, on)
+                {
+                    tracing::error!("saving favourite failed: {e:#}");
                 }
                 if let Some((id, name)) = ev.activated {
                     self.play_channel(&id, &name);

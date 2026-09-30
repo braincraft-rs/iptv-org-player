@@ -23,8 +23,20 @@ struct Group {
 
 #[derive(Clone, Copy)]
 enum Item {
-    Header { group: usize, shown: usize },
+    Header {
+        group: usize,
+        shown: usize,
+    },
     Channel(usize),
+    /// A favourite whose channel is gone after a sync (index into `missing`).
+    Missing(usize),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum Tab {
+    #[default]
+    All,
+    Favourites,
 }
 
 /// What the user did in the list this frame.
@@ -34,6 +46,8 @@ pub struct BrowserEvent {
     pub nsfw_changed: Option<bool>,
     /// A channel row was clicked: (channel id, display name).
     pub activated: Option<(String, String)>,
+    /// A star was clicked: (channel id, now favourite).
+    pub favourite_toggled: Option<(String, bool)>,
 }
 
 #[derive(Default)]
@@ -47,6 +61,10 @@ pub struct ChannelBrowser {
     open: HashSet<String>,
     visible: Vec<Item>,
     selected: Option<usize>,
+    tab: Tab,
+    favourites: HashSet<String>,
+    /// Favourite ids with no matching channel, in the current `visible` list.
+    missing: Vec<String>,
 }
 
 impl ChannelBrowser {
@@ -93,6 +111,11 @@ impl ChannelBrowser {
         self.rebuild();
     }
 
+    pub fn set_favourites(&mut self, ids: impl IntoIterator<Item = String>) {
+        self.favourites = ids.into_iter().collect();
+        self.rebuild();
+    }
+
     pub fn set_show_nsfw(&mut self, on: bool) {
         self.show_nsfw = on;
         self.rebuild();
@@ -106,6 +129,10 @@ impl ChannelBrowser {
     fn rebuild(&mut self) {
         let q = self.query.trim().to_lowercase();
         let searching = !q.is_empty();
+        if self.tab == Tab::Favourites {
+            self.rebuild_favourites(&q);
+            return;
+        }
         let mut visible = Vec::new();
         for (gi, g) in self.groups.iter().enumerate() {
             let country_match = searching && g.title.to_lowercase().contains(&q);
@@ -132,6 +159,31 @@ impl ChannelBrowser {
         self.visible = visible;
     }
 
+    /// Flat list of starred channels (by name), then ones no longer available.
+    fn rebuild_favourites(&mut self, q: &str) {
+        let mut visible = Vec::new();
+        let mut known = HashSet::new();
+        for (i, c) in self.channels.iter().enumerate() {
+            if !self.favourites.contains(&c.id) {
+                continue;
+            }
+            known.insert(c.id.as_str());
+            if (self.show_nsfw || !c.is_nsfw) && (q.is_empty() || self.lower_names[i].contains(q)) {
+                visible.push(Item::Channel(i));
+            }
+        }
+        let mut missing: Vec<String> = self
+            .favourites
+            .iter()
+            .filter(|id| !known.contains(id.as_str()) && id.to_lowercase().contains(q))
+            .cloned()
+            .collect();
+        missing.sort();
+        visible.extend((0..missing.len()).map(Item::Missing));
+        self.visible = visible;
+        self.missing = missing;
+    }
+
     pub fn ui(&mut self, ui: &mut Ui) -> BrowserEvent {
         let mut event = BrowserEvent::default();
         let mut dirty = false;
@@ -155,9 +207,21 @@ impl ChannelBrowser {
                 dirty = true;
             }
         });
+        ui.horizontal(|ui| {
+            let fav_label = format!("★ Favourites ({})", self.favourites.len());
+            for (tab, label) in [
+                (Tab::All, "All channels".to_string()),
+                (Tab::Favourites, fav_label),
+            ] {
+                if ui.selectable_label(self.tab == tab, label).clicked() && self.tab != tab {
+                    self.tab = tab;
+                    dirty = true;
+                }
+            }
+        });
         ui.separator();
 
-        if self.channels.is_empty() {
+        if self.channels.is_empty() && self.favourites.is_empty() {
             ui.add_space(12.0);
             ui.label("No channels yet. Click Sync to download the list.");
             if dirty {
@@ -167,7 +231,11 @@ impl ChannelBrowser {
         }
         if self.visible.is_empty() {
             ui.add_space(12.0);
-            ui.label("No matches.");
+            if self.tab == Tab::Favourites && self.query.trim().is_empty() {
+                ui.label("No favourites yet. Click ☆ next to a channel to add one.");
+            } else {
+                ui.label("No matches.");
+            }
             if dirty {
                 self.rebuild();
             }
@@ -177,6 +245,7 @@ impl ChannelBrowser {
         let searching = !self.query.trim().is_empty();
         let mut toggle: Option<String> = None;
         let mut select: Option<usize> = None;
+        let mut fav_toggle: Option<(String, bool)> = None;
         let total = self.visible.len();
 
         egui::ScrollArea::vertical()
@@ -211,6 +280,10 @@ impl ChannelBrowser {
                                 pos2(rect.left() + 22.0, rect.center().y - LOGO_SIZE / 2.0),
                                 vec2(LOGO_SIZE, LOGO_SIZE),
                             );
+                            let is_fav = self.favourites.contains(&ch.id);
+                            let star = star_rect(rect);
+                            let star_resp =
+                                ui.interact(star, ui.id().with(("star", idx)), Sense::click());
                             if let Some(url) = &ch.logo_url {
                                 egui::Image::new(url.as_str())
                                     .fit_to_exact_size(logo.size())
@@ -225,12 +298,37 @@ impl ChannelBrowser {
                             ui.painter().text(
                                 pos2(logo.right() + 8.0, rect.center().y),
                                 Align2::LEFT_CENTER,
-                                truncate(&ch.name, 34),
+                                truncate(&ch.name, 30),
                                 FontId::proportional(14.0),
                                 color,
                             );
-                            if resp.clicked() {
+                            paint_star(ui, star, is_fav, star_resp.hovered());
+                            if star_resp.clicked() {
+                                fav_toggle = Some((ch.id.clone(), !is_fav));
+                            } else if resp.clicked() {
                                 select = Some(idx);
+                            }
+                        }
+                        Item::Missing(mi) => {
+                            let id = &self.missing[mi];
+                            let (rect, resp) = row_rect(ui);
+                            paint_hover(ui, &resp, rect, false);
+                            let star = star_rect(rect);
+                            let star_resp = ui.interact(
+                                star,
+                                ui.id().with(("star-missing", mi)),
+                                Sense::click(),
+                            );
+                            ui.painter().text(
+                                pos2(rect.left() + 22.0, rect.center().y),
+                                Align2::LEFT_CENTER,
+                                truncate(&format!("{id} (no longer available)"), 34),
+                                FontId::proportional(13.0),
+                                Color32::GRAY,
+                            );
+                            paint_star(ui, star, true, star_resp.hovered());
+                            if star_resp.clicked() {
+                                fav_toggle = Some((id.clone(), false));
                             }
                         }
                     }
@@ -243,6 +341,15 @@ impl ChannelBrowser {
             }
             dirty = true;
         }
+        if let Some((id, on)) = fav_toggle {
+            if on {
+                self.favourites.insert(id.clone());
+            } else {
+                self.favourites.remove(&id);
+            }
+            event.favourite_toggled = Some((id, on));
+            dirty = true;
+        }
         if let Some(i) = select {
             self.selected = Some(i);
             let ch = &self.channels[i];
@@ -253,6 +360,30 @@ impl ChannelBrowser {
         }
         event
     }
+}
+
+fn star_rect(row: egui::Rect) -> egui::Rect {
+    egui::Rect::from_center_size(
+        pos2(row.right() - 16.0, row.center().y),
+        vec2(26.0, ROW_HEIGHT),
+    )
+}
+
+fn paint_star(ui: &Ui, rect: egui::Rect, on: bool, hovered: bool) {
+    let (glyph, color) = if on {
+        ("★", Color32::from_rgb(245, 200, 60))
+    } else if hovered {
+        ("☆", Color32::from_rgb(245, 200, 60))
+    } else {
+        ("☆", Color32::from_gray(110))
+    };
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        glyph,
+        FontId::proportional(17.0),
+        color,
+    );
 }
 
 fn row_rect(ui: &mut Ui) -> (egui::Rect, egui::Response) {
@@ -361,6 +492,32 @@ mod tests {
         b.query = "croat".into();
         b.rebuild();
         assert_eq!(b.visible.len(), 3); // header + both HRT channels
+    }
+
+    #[test]
+    fn favourites_tab_lists_only_starred_and_flags_missing() {
+        let mut b = browser();
+        b.set_favourites(["h2".to_string(), "gone".to_string()]);
+        b.tab = Tab::Favourites;
+        b.rebuild();
+        assert_eq!(b.visible.len(), 2);
+        assert!(matches!(b.visible[0], Item::Channel(i) if b.channels[i].id == "h2"));
+        assert!(matches!(b.visible[1], Item::Missing(0)));
+        assert_eq!(b.missing, ["gone"]);
+    }
+
+    #[test]
+    fn favourites_tab_respects_search_and_nsfw() {
+        let mut b = browser();
+        b.set_favourites(["a".to_string(), "b".to_string()]);
+        b.tab = Tab::Favourites;
+        b.rebuild();
+        assert_eq!(b.visible.len(), 1); // "b" is NSFW, hidden
+        b.set_show_nsfw(true);
+        assert_eq!(b.visible.len(), 2);
+        b.query = "alpha".into();
+        b.rebuild();
+        assert_eq!(b.visible.len(), 1);
     }
 
     #[test]
