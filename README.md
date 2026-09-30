@@ -4,7 +4,7 @@ A simple, cross-platform desktop IPTV player written in Rust. It syncs the publi
 lists from [iptv-org/iptv](https://github.com/iptv-org/iptv), groups them by country, and lets
 you watch a channel, star your favourites and control the volume.
 
-> **Status:** working app (milestones M0-M6 done). Packaged releases (M7) are not available yet. See [docs/PLAN.md](docs/PLAN.md).
+> **Status:** working app (milestones M0-M7 done). Release packaging is set up but no release has been published yet; see [docs/RELEASING.md](docs/RELEASING.md). Only macOS has been tested. See [docs/PLAN.md](docs/PLAN.md).
 
 ## Features (MVP)
 
@@ -37,6 +37,8 @@ Rationale and alternatives: [docs/PLAN.md](docs/PLAN.md#technology-choices).
 - [docs/PLAN.md](docs/PLAN.md) - goals, scope, tech decisions, milestones
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - diagrams, modules, data model
 - [docs/DATA-SOURCES.md](docs/DATA-SOURCES.md) - findings from investigating iptv-org
+- [docs/RELEASING.md](docs/RELEASING.md) - packaging and release process
+- [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) - licences of dependencies
 
 ## Planned project layout
 
@@ -99,5 +101,5 @@ should direct removal requests to the iptv-org repository.
 
 The code in this repository is released under the [MIT License](LICENSE).
 Channel data belongs to [iptv-org](https://github.com/iptv-org/iptv) (Unlicense) and is
-fetched at runtime, never bundled. libmpv is LGPL/GPL depending on how it is built; see
-[docs/PLAN.md](docs/PLAN.md#licensing-notes).
+fetched at runtime, never bundled. libmpv is LGPL/GPL depending on how it is built (the macOS
+package bundles a GPL build); see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

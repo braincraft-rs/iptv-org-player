@@ -1,0 +1,108 @@
+name: Release
+
+# Push a tag like v0.1.0 to build packages for all platforms and attach them to
+# a GitHub release. Only the macOS packaging has been tested locally; the Linux
+# and Windows jobs are a best-effort first version and may need adjustments.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install mpv dylibbundler pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: ./scripts/bundle-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*.zip
+
+  linux:
+    # Built on 24.04 so it links libmpv.so.2 (package libmpv2).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libmpv-dev \
+            libgl1-mesa-dev libx11-dev libxkbcommon-dev libwayland-dev libxcb1-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      - name: Package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          DIR="IPTV-Org-Player-${VERSION}-linux-x86_64"
+          mkdir -p "dist/$DIR"
+          cp target/release/iptv-org-player LICENSE README.md THIRD-PARTY-NOTICES.md "dist/$DIR/"
+          echo "Requires libmpv2: sudo apt install libmpv2 (Ubuntu 24.04+/Debian 13+)" > "dist/$DIR/REQUIRES.txt"
+          tar -C dist -czf "dist/$DIR.tar.gz" "$DIR"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*.tar.gz
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Get libmpv (shinchiro builds)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $url = gh api repos/shinchiro/mpv-winbuild-cmake/releases/latest `
+            --jq '.assets[] | select(.name | test("^mpv-dev-x86_64-[0-9]")) | .browser_download_url' | Select-Object -First 1
+          Invoke-WebRequest $url -OutFile mpv-dev.7z
+          7z x mpv-dev.7z -ompv-dev | Out-Null
+          Get-ChildItem mpv-dev
+      - name: Create MSVC import library
+        shell: pwsh
+        run: |
+          # Use the MSVC linker tools on PATH (vcvars) to build mpv.lib from mpv.def
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" && lib /name:libmpv-2.dll /def:mpv-dev\mpv.def /out:mpv-dev\mpv.lib /machine:x64"
+      - name: Build
+        shell: pwsh
+        run: |
+          $env:LIB = "$PWD\mpv-dev;$env:LIB"
+          cargo build --release
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $dir = "IPTV-Org-Player-$version-windows-x86_64"
+          New-Item -ItemType Directory -Force "dist/$dir" | Out-Null
+          Copy-Item target/release/iptv-org-player.exe, mpv-dev/libmpv-2.dll, LICENSE, README.md, THIRD-PARTY-NOTICES.md "dist/$dir"
+          Compress-Archive "dist/$dir" "dist/$dir.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*.zip
+
+  publish:
+    needs: [macos, linux, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

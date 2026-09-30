@@ -49,7 +49,7 @@ proxy at all.
 | M4 | Player UI | Click-to-play, play/pause, volume + mute (persisted), error overlay, next-stream fallback |
 | M5 | Favourites | Star toggle, Favourites view, survives re-sync |
 | M6 | Polish | Settings, About/disclaimer, keyboard shortcuts, app icon |
-| M7 | Release | Packaged builds (macOS `.app`/dmg, Windows zip/installer, Linux AppImage) via GitHub Actions, libmpv bundled |
+| M7 | Release | Packaged builds via GitHub Actions. **Done:** macOS `.app` with bundled libmpv (tested), CI, Linux tar.gz and Windows zip (untested). See [RELEASING.md](RELEASING.md) |
 
 M1 comes first on purpose: embedding mpv video in egui and bundling libmpv are the two biggest risks.
 Fallback if the GL embedding proves too painful: launch libmpv in its own window (still
