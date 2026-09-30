@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result};
 use rusqlite::{Connection, params};
 
-use crate::model::{BrowseChannel, Catalog, Country};
+use crate::model::{BrowseChannel, Catalog, Country, Stream};
 
 /// Ordered migrations; `PRAGMA user_version` holds how many were applied.
 const MIGRATIONS: &[&str] = &[
@@ -199,6 +199,28 @@ impl Db {
         Ok((countries, channels))
     }
 
+    /// Streams of a channel, best quality first (unknown quality last).
+    pub fn streams_for_channel(&self, channel_id: &str) -> Result<Vec<Stream>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT channel_id, url, quality, referrer, user_agent
+             FROM stream WHERE channel_id = ?1 ORDER BY id",
+        )?;
+        let mut streams = stmt
+            .query_map(params![channel_id], |r| {
+                Ok(Stream {
+                    channel_id: r.get(0)?,
+                    url: r.get(1)?,
+                    quality: r.get(2)?,
+                    referrer: r.get(3)?,
+                    user_agent: r.get(4)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        // Stable sort keeps the API order among equal qualities.
+        streams.sort_by_key(|s| std::cmp::Reverse(quality_rank(s.quality.as_deref())));
+        Ok(streams)
+    }
+
     pub fn last_synced_at(&self) -> Result<Option<String>> {
         self.get_setting("last_synced_at")
     }
@@ -244,6 +266,17 @@ impl Db {
             .collect::<rusqlite::Result<Vec<String>>>()?;
         Ok(ids)
     }
+}
+
+/// "1080p" -> 1080, "720i" -> 720, unknown -> 0.
+fn quality_rank(q: Option<&str>) -> u32 {
+    q.map(|q| {
+        q.chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>()
+    })
+    .and_then(|d| d.parse().ok())
+    .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -312,6 +345,33 @@ mod tests {
         assert_eq!(channels.len(), 2);
         assert_eq!(channels[0].stream_count, 1);
         assert_eq!(channels[0].categories, ["news"]);
+    }
+
+    #[test]
+    fn streams_sorted_best_quality_first() {
+        let mut db = Db::open_in_memory().unwrap();
+        let mut cat = catalog(1);
+        let mk = |url: &str, q: Option<&str>| Stream {
+            channel_id: "ch0".into(),
+            url: url.into(),
+            quality: q.map(String::from),
+            referrer: None,
+            user_agent: None,
+        };
+        cat.streams = vec![
+            mk("u-none", None),
+            mk("u-480", Some("480p")),
+            mk("u-1080", Some("1080p")),
+            mk("u-720", Some("720i")),
+        ];
+        db.replace_catalog(&cat).unwrap();
+        let urls: Vec<_> = db
+            .streams_for_channel("ch0")
+            .unwrap()
+            .into_iter()
+            .map(|s| s.url)
+            .collect();
+        assert_eq!(urls, ["u-1080", "u-720", "u-480", "u-none"]);
     }
 
     #[test]

@@ -32,6 +32,8 @@ enum Item {
 pub struct BrowserEvent {
     /// Show-NSFW checkbox changed to this value.
     pub nsfw_changed: Option<bool>,
+    /// A channel row was clicked: (channel id, display name).
+    pub activated: Option<(String, String)>,
 }
 
 #[derive(Default)]
@@ -243,6 +245,8 @@ impl ChannelBrowser {
         }
         if let Some(i) = select {
             self.selected = Some(i);
+            let ch = &self.channels[i];
+            event.activated = Some((ch.id.clone(), ch.name.clone()));
         }
         if dirty {
             self.rebuild();

@@ -26,6 +26,8 @@ pub enum PlayerStatus {
     Error(String),
 }
 
+pub mod queue;
+
 pub type GlLoader = Arc<dyn Fn(&CStr) -> *const c_void + Send + Sync>;
 
 fn get_proc_address(loader: &GlLoader, name: &str) -> *mut c_void {
@@ -127,6 +129,10 @@ impl Player {
 
     pub fn set_volume(&self, volume: f64) {
         let _ = self.mpv.set_property("volume", volume.clamp(0.0, 100.0));
+    }
+
+    pub fn set_paused(&self, paused: bool) {
+        let _ = self.mpv.set_property("pause", paused);
     }
 
     pub fn set_muted(&self, muted: bool) {
