@@ -3,6 +3,7 @@ mod db;
 mod icon;
 mod model;
 mod player;
+mod record;
 mod sync;
 mod ui;
 

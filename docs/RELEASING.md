@@ -11,6 +11,12 @@
 Not done yet: Intel macOS build, AppImage/Flatpak for Linux, Windows installer, a `.icns`
 icon for the macOS `.app` (the window/Dock icon is set at runtime), Apple notarization.
 
+## Recording needs ffmpeg
+
+Recording (and scheduled recording) runs the user's installed `ffmpeg`; it is **not** bundled
+in any package, so release notes should tell users to install it (`brew install ffmpeg`,
+`winget install ffmpeg`, `sudo apt install ffmpeg`). Everything else works without it.
+
 ## Cutting a release
 
 1. Bump `version` in `Cargo.toml`, commit.

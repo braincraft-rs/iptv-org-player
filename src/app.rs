@@ -4,12 +4,17 @@ use std::time::{Duration, Instant};
 
 use egui::{Align2, Color32, FontId, Rect, pos2, vec2};
 
-use crate::db::{self, Counts, Db};
+use chrono::Local;
+
+use crate::db::{self, Counts, Db, RecordingRow};
 use crate::model::Stream;
 use crate::player::queue::StreamQueue;
 use crate::player::{Player, PlayerStatus, StreamSpec};
+use crate::record::schedule::{Due, Scheduled, Status, due};
+use crate::record::{self, Finished, Preset, RecordRequest, Recorder};
 use crate::sync::{self, SyncMsg};
 use crate::ui::browser::ChannelBrowser;
+use crate::ui::recordings::{self, RecordingsPanel};
 
 /// A stream that is still "Loading" after this long counts as failed.
 const LOAD_TIMEOUT: Duration = Duration::from_secs(20);
@@ -41,6 +46,16 @@ pub struct App {
     paused: bool,
     volume: f32,
     muted: bool,
+    recorder: Recorder,
+    rec_panel: RecordingsPanel,
+    schedules: Vec<Scheduled>,
+    history: Vec<RecordingRow>,
+    ffmpeg: Option<PathBuf>,
+    ffmpeg_setting: String,
+    record_dir: PathBuf,
+    record_preset: Preset,
+    /// Last recording event shown in the top bar.
+    rec_notice: Option<(String, Instant)>,
 }
 
 impl App {
@@ -86,12 +101,25 @@ impl App {
             paused: false,
             volume,
             muted,
+            recorder: Recorder::default(),
+            rec_panel: RecordingsPanel::default(),
+            schedules: Vec::new(),
+            history: Vec::new(),
+            ffmpeg: None,
+            ffmpeg_setting: String::new(),
+            record_dir: record::default_output_dir(),
+            record_preset: Preset::Small,
+            rec_notice: None,
         };
         egui_extras::install_image_loaders(&cc.egui_ctx);
         app.refresh_counts();
         app.load_browser();
         app.apply_volume();
+        app.init_recording();
         // Debug hooks for headless verification.
+        if std::env::var_os("IPTV_OPEN_RECORDINGS").is_some() {
+            app.rec_panel.open = true;
+        }
         if std::env::var_os("IPTV_SYNC_ON_START").is_some() {
             app.start_sync();
         }
@@ -348,6 +376,264 @@ impl App {
         self.show_about = open;
     }
 
+    // ---- recording -----------------------------------------------------------
+
+    fn init_recording(&mut self) {
+        let Some(db) = &self.db else { return };
+        let get = |k: &str| db.get_setting(k).ok().flatten();
+        self.ffmpeg_setting = get("ffmpeg_path").unwrap_or_default();
+        if let Some(dir) = get("record_dir").filter(|d| !d.trim().is_empty()) {
+            self.record_dir = PathBuf::from(dir);
+        }
+        if let Some(p) = get("record_preset").and_then(|k| Preset::from_key(&k)) {
+            self.record_preset = p;
+        }
+        let _ = db.fail_stale_running();
+        self.ffmpeg = record::find_ffmpeg(&self.ffmpeg_setting);
+        self.rec_panel.set_default_preset(self.record_preset);
+        self.refresh_recordings();
+    }
+
+    fn refresh_recordings(&mut self) {
+        if let Some(db) = &self.db {
+            self.schedules = db.list_schedules().unwrap_or_default();
+            self.history = db.list_recordings(100).unwrap_or_default();
+        }
+    }
+
+    fn notice(&mut self, text: impl Into<String>) {
+        self.rec_notice = Some((text.into(), Instant::now()));
+    }
+
+    /// Record the channel that is playing, starting from the stream in use.
+    fn start_quick_recording(&mut self) {
+        let Some(ffmpeg) = self.ffmpeg.clone() else {
+            self.rec_panel.open = true;
+            self.notice(record::install_hint());
+            return;
+        };
+        let Some(now) = &self.now else { return };
+        let req = RecordRequest {
+            channel_name: now.name.clone(),
+            streams: now.queue.streams().to_vec(),
+            start_index: now.queue.index(),
+            preset: self.record_preset,
+            out_dir: self.record_dir.clone(),
+            duration: None,
+            schedule_id: None,
+        };
+        match self.recorder.start(&ffmpeg, req) {
+            Ok(_) => self.notice(format!("Recording {}…", now_name(&self.now))),
+            Err(e) => self.notice(format!("Could not start recording: {e:#}")),
+        }
+    }
+
+    fn handle_finished(&mut self, f: Finished) {
+        if let Some(db) = &self.db {
+            let row = RecordingRow {
+                id: 0,
+                channel_name: f.channel_name.clone(),
+                path: f.path.display().to_string(),
+                preset: f.preset,
+                started_ts: f.started_at.timestamp(),
+                size_bytes: f.size_bytes,
+                ok: f.ok,
+                note: f.note.clone(),
+            };
+            if let Err(e) = db.add_recording(&row) {
+                tracing::error!("saving recording failed: {e:#}");
+            }
+            if let Some(id) = f.schedule_id {
+                let status = if f.ok { Status::Done } else { Status::Failed };
+                let _ = db.set_schedule_status(id, status, &f.note);
+            }
+        }
+        let text = if f.ok {
+            format!(
+                "Saved {} ({})",
+                f.channel_name,
+                record::format_size(f.size_bytes)
+            )
+        } else {
+            format!("Recording of {} failed: {}", f.channel_name, f.note)
+        };
+        self.notice(text);
+    }
+
+    fn start_scheduled(&mut self, s: &Scheduled, remaining_secs: i64) {
+        let fail = |app: &mut Self, note: &str| {
+            if let Some(db) = &app.db {
+                let _ = db.set_schedule_status(s.id, Status::Failed, note);
+            }
+            app.notice(format!(
+                "Scheduled recording of {} failed: {note}",
+                s.channel_name
+            ));
+        };
+        let Some(ffmpeg) = self.ffmpeg.clone() else {
+            return fail(self, "ffmpeg not found");
+        };
+        let streams = self
+            .db
+            .as_ref()
+            .and_then(|d| d.streams_for_channel(&s.channel_id).ok())
+            .unwrap_or_default();
+        if streams.is_empty() {
+            return fail(self, "channel no longer available");
+        }
+        let req = RecordRequest {
+            channel_name: s.channel_name.clone(),
+            streams,
+            start_index: 0,
+            preset: s.preset,
+            out_dir: self.record_dir.clone(),
+            duration: Some(Duration::from_secs(remaining_secs.max(1) as u64)),
+            schedule_id: Some(s.id),
+        };
+        match self.recorder.start(&ffmpeg, req) {
+            Ok(_) => {
+                if let Some(db) = &self.db {
+                    let _ = db.set_schedule_status(s.id, Status::Running, "");
+                }
+                self.notice(format!("Scheduled recording started: {}", s.channel_name));
+            }
+            Err(e) => fail(self, &format!("{e:#}")),
+        }
+    }
+
+    /// Per frame: reap finished recordings and start/miss due schedules.
+    fn tick_recordings(&mut self, ctx: &egui::Context) {
+        let ff = self.ffmpeg.clone();
+        let finished = self.recorder.poll(ff.as_deref());
+        let mut changed = !finished.is_empty();
+        for f in finished {
+            self.handle_finished(f);
+        }
+
+        let now_ts = Local::now().timestamp();
+        let mut to_start = Vec::new();
+        for s in &self.schedules {
+            match due(s, now_ts) {
+                Due::Start { remaining_secs } => to_start.push((s.clone(), remaining_secs)),
+                Due::Missed => {
+                    if let Some(db) = &self.db {
+                        let _ = db.set_schedule_status(s.id, Status::Missed, "");
+                    }
+                    changed = true;
+                }
+                Due::Nothing => {}
+            }
+        }
+        for (s, remaining) in to_start {
+            self.start_scheduled(&s, remaining);
+            changed = true;
+        }
+        if changed {
+            self.refresh_recordings();
+        }
+        let waiting = self.schedules.iter().any(|s| s.status == Status::Pending);
+        if self.recorder.is_recording() || waiting {
+            ctx.request_repaint_after(Duration::from_secs(1));
+        }
+    }
+
+    fn handle_rec_cmds(&mut self, cmds: Vec<recordings::Cmd>) {
+        use recordings::Cmd;
+        for cmd in cmds {
+            match cmd {
+                Cmd::Schedule {
+                    channel_id,
+                    channel_name,
+                    start_ts,
+                    duration_secs,
+                    preset,
+                } => {
+                    if let Some(db) = &self.db {
+                        match db.add_schedule(
+                            &channel_id,
+                            &channel_name,
+                            start_ts,
+                            duration_secs,
+                            preset,
+                        ) {
+                            Ok(_) => self.notice(format!("Scheduled {channel_name}")),
+                            Err(e) => self.notice(format!("Could not schedule: {e:#}")),
+                        }
+                    }
+                }
+                Cmd::CancelSchedule(id) => {
+                    if let Some(db) = &self.db {
+                        let _ = db.set_schedule_status(id, Status::Cancelled, "");
+                    }
+                }
+                Cmd::DeleteSchedule(id) => {
+                    if let Some(db) = &self.db {
+                        let _ = db.delete_schedule(id);
+                    }
+                }
+                Cmd::DeleteHistory(id) => {
+                    if let Some(db) = &self.db {
+                        let _ = db.delete_recording(id);
+                    }
+                }
+                Cmd::Stop(id) => self.recorder.stop(id),
+                Cmd::Reveal(path) => record::reveal(&path),
+                Cmd::SetOutDir(dir) => {
+                    let dir = dir.trim();
+                    self.record_dir = if dir.is_empty() {
+                        record::default_output_dir()
+                    } else {
+                        PathBuf::from(dir)
+                    };
+                    if let Some(db) = &self.db {
+                        let _ = db.set_setting("record_dir", dir);
+                    }
+                }
+                Cmd::SetFfmpegPath(path) => {
+                    self.ffmpeg_setting = path.trim().to_string();
+                    self.ffmpeg = record::find_ffmpeg(&self.ffmpeg_setting);
+                    if let Some(db) = &self.db {
+                        let _ = db.set_setting("ffmpeg_path", &self.ffmpeg_setting);
+                    }
+                    if self.ffmpeg.is_none() {
+                        self.notice(record::install_hint());
+                    }
+                }
+                Cmd::SetPreset(p) => {
+                    self.record_preset = p;
+                    if let Some(db) = &self.db {
+                        let _ = db.set_setting("record_preset", p.key());
+                    }
+                }
+            }
+        }
+        self.refresh_recordings();
+    }
+
+    fn recordings_window(&mut self, ctx: &egui::Context) {
+        if !self.rec_panel.open {
+            return;
+        }
+        let selected = self
+            .browser
+            .selected_channel()
+            .map(|c| (c.id.as_str(), c.name.as_str()));
+        let view = recordings::View {
+            ffmpeg: self.ffmpeg.as_deref(),
+            active: self.recorder.active(),
+            schedules: &self.schedules,
+            history: &self.history,
+            selected,
+            out_dir: &self.record_dir,
+            ffmpeg_setting: &self.ffmpeg_setting,
+            default_preset: self.record_preset,
+        };
+        let cmds = self.rec_panel.ui(ctx, &view);
+        if !cmds.is_empty() {
+            self.handle_rec_cmds(cmds);
+        }
+    }
+
     fn stop(&mut self) {
         self.now = None;
         self.paused = false;
@@ -412,13 +698,28 @@ fn stream_label(i: usize, s: &Stream) -> String {
     )
 }
 
+fn now_name(now: &Option<NowPlaying>) -> &str {
+    now.as_ref().map(|n| n.name.as_str()).unwrap_or("")
+}
+
 impl eframe::App for App {
+    fn on_exit(&mut self, _gl: Option<&glow::Context>) {
+        // Let ffmpeg finish its files so recordings are not lost on quit.
+        let ff = self.ffmpeg.clone();
+        let finished = self.recorder.shutdown(ff.as_deref());
+        for f in finished {
+            self.handle_finished(f);
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.poll_sync();
         self.update_playback();
+        self.tick_recordings(ui.ctx());
         let ctx = ui.ctx().clone();
         self.handle_shortcuts(&ctx);
         self.about_window(&ctx);
+        self.recordings_window(&ctx);
 
         if !self.fullscreen {
             self.top_and_side_panels(ui);
@@ -472,6 +773,18 @@ impl App {
                     if ui.button("About").clicked() {
                         self.show_about = true;
                     }
+                    if ui.button("Recordings").clicked() {
+                        self.rec_panel.open = !self.rec_panel.open;
+                    }
+                    let n = self.recorder.active().len();
+                    if n > 0 {
+                        ui.colored_label(Color32::from_rgb(230, 70, 70), format!("● REC {n}"));
+                    }
+                    if let Some((text, at)) = &self.rec_notice
+                        && at.elapsed() < Duration::from_secs(12)
+                    {
+                        ui.weak(text);
+                    }
                 });
             });
         });
@@ -495,6 +808,52 @@ impl App {
             });
     }
 
+    /// Record button + quality picker in the player bar.
+    fn record_controls(&mut self, ui: &mut egui::Ui) {
+        let channel = self.now.as_ref().map(|n| n.name.clone());
+        let active = channel
+            .as_ref()
+            .and_then(|c| self.recorder.active().iter().find(|a| &a.channel_name == c));
+        match active {
+            Some(a) => {
+                let (id, stopping) = (a.id, a.is_stopping());
+                let text = format!(
+                    "⏹ Stop rec  {} · {}",
+                    record::format_duration(a.started.elapsed()),
+                    record::format_size(a.size_bytes())
+                );
+                if ui
+                    .add_enabled(
+                        !stopping,
+                        egui::Button::new(
+                            egui::RichText::new(text).color(Color32::from_rgb(235, 90, 90)),
+                        ),
+                    )
+                    .clicked()
+                {
+                    self.recorder.stop(id);
+                }
+            }
+            None => {
+                if ui
+                    .add_enabled(channel.is_some(), egui::Button::new("⏺ Record"))
+                    .on_hover_text("Record this channel to a file")
+                    .clicked()
+                {
+                    self.start_quick_recording();
+                }
+            }
+        }
+        let mut preset = self.record_preset;
+        if recordings::preset_combo(ui, "quick_preset", &mut preset, 170.0) {
+            self.record_preset = preset;
+            if let Some(db) = &self.db {
+                let _ = db.set_setting("record_preset", preset.key());
+            }
+            self.rec_panel.set_default_preset(preset);
+        }
+    }
+
     fn controls_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::bottom("controls").show(ui, |ui| {
             ui.add_space(4.0);
@@ -513,6 +872,8 @@ impl App {
                 {
                     self.stop();
                 }
+                ui.separator();
+                self.record_controls(ui);
                 ui.separator();
 
                 let mut changed = false;

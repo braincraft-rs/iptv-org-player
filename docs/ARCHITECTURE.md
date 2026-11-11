@@ -217,3 +217,68 @@ enum SyncMsg { Progress(String), Done(SyncSummary), Failed(String) }
 | Large lists slow the UI | Collapsed groups, row virtualization, lazy logo loading |
 | Wayland/Linux GL quirks | Test early on a Linux VM in M1 |
 | Legal/content exposure | NSFW hidden by default, honour closed channels, disclaimer in README/About |
+
+## 10. Recording
+
+Recording runs the user's installed **ffmpeg** as a child process, one per recording. The app
+supervises it (`record::Recorder`); the database stores schedules and a history of finished
+recordings (migration v2: `schedule`, `recording`).
+
+```mermaid
+flowchart LR
+    subgraph App["Desktop app"]
+        UI[Player bar: Record + quality<br/>Recordings window]
+        TICK[tick_recordings<br/>every frame / 1 s]
+        REC[Recorder<br/>supervises children]
+        DB[(SQLite<br/>schedule, recording)]
+    end
+    FF[[ffmpeg process]]
+    SRC[Stream server]
+    FILE[(.ts / .mp4 / .m4a file)]
+
+    UI -->|start / stop / schedule| REC
+    UI -->|add schedule| DB
+    TICK -->|due schedules| REC
+    TICK -->|history, status| DB
+    REC -->|spawn, "q" on stdin to stop| FF
+    SRC -->|HLS + Referer / User-Agent| FF
+    FF -->|copy or re-encode| FILE
+```
+
+### Scheduled recording
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pending: user schedules
+    Pending --> Cancelled: user cancels
+    Pending --> Running: start time reached (app open)
+    Pending --> Missed: whole window passed (app was closed)
+    Running --> Done: file saved
+    Running --> Failed: no stream worked / ffmpeg missing
+```
+
+If the app starts inside a window that is already running, it records the remaining time.
+
+### Supervision rules (`record::Limits`)
+
+| Situation | Reaction |
+|---|---|
+| ffmpeg exits quickly or writes nothing | try the channel's next stream into the same file |
+| No data 20 s after (re)start | kill that attempt, try the next stream |
+| Output stops growing for 90 s mid-recording | stop, keep the partial file |
+| Timed recording still running 30 s after its wall-clock end | graceful stop (`-t` only counts media time) |
+| User stops / app quits | send `q` so ffmpeg finalises the file; kill after 6 s |
+| All streams failed | no file left behind, failure recorded in history |
+
+### Quality presets (ffmpeg)
+
+| Preset | Video | Audio | Container |
+|---|---|---|---|
+| Original | `-c copy` | copy | MPEG-TS (accepts any codec) |
+| Medium | H.264, max 720p, CRF 26 | AAC 96k stereo | fragmented MP4 |
+| Small | H.264, max 480p, CRF 28 | AAC 80k stereo | fragmented MP4 |
+| Tiny | H.264, max 360p, CRF 31 | AAC 48k mono | fragmented MP4 |
+| Audio only | none | AAC 64k | M4A |
+
+Fragmented MP4 stays playable even if the process is killed. Videos are never upscaled
+(`min(height, source height)`).

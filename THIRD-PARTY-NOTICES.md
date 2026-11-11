@@ -18,6 +18,11 @@ GPL-compatible), and the corresponding source of the bundled libraries is availa
 the links above. To use an LGPL-only libmpv instead, replace the libraries in
 `IPTV-Org Player.app/Contents/Frameworks/` or build against an LGPL build of mpv.
 
+## Optional external tool
+
+Recording uses a separately installed [ffmpeg](https://ffmpeg.org) executable (LGPL/GPL depending
+on how it was built). It is not distributed with this project.
+
 ## Channel data
 
 Channel lists are fetched at runtime from the public [iptv-org](https://github.com/iptv-org/iptv) API
@@ -25,18 +30,18 @@ Channel lists are fetched at runtime from the public [iptv-org](https://github.c
 
 ## Rust crates
 
-422 crates. Licence summary:
+436 crates. Licence summary:
 
-- 185 x MIT OR Apache-2.0
+- 194 x MIT OR Apache-2.0
 - 100 x MIT
 - 32 x Apache-2.0 OR MIT
 - 18 x Unicode-3.0
 - 12 x MIT/Apache-2.0
 - 9 x Zlib OR Apache-2.0 OR MIT
 - 9 x Apache-2.0
+- 8 x Unlicense OR MIT
 - 7 x MIT OR Apache-2.0 OR Zlib
 - 7 x Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
-- 3 x Unlicense OR MIT
 - 3 x Zlib
 - 3 x Apache-2.0 OR ISC OR MIT
 - 3 x ISC
@@ -70,6 +75,7 @@ Channel lists are fetched at runtime from the public [iptv-org](https://github.c
 | aho-corasick | 1.1.5 | Unlicense OR MIT |
 | android-activity | 0.6.1 | MIT OR Apache-2.0 |
 | android-properties | 0.2.2 | MIT |
+| android_system_properties | 0.1.6 | MIT OR Apache-2.0 |
 | anyhow | 1.0.104 | MIT OR Apache-2.0 |
 | arboard | 3.6.1 | MIT OR Apache-2.0 |
 | arrayref | 0.3.9 | BSD-2-Clause |
@@ -98,6 +104,7 @@ Channel lists are fetched at runtime from the public [iptv-org](https://github.c
 | cfg-if | 1.0.5 | MIT OR Apache-2.0 |
 | cgl | 0.3.2 | MIT / Apache-2.0 |
 | chacha20 | 0.10.2 | MIT OR Apache-2.0 |
+| chrono | 0.4.45 | MIT OR Apache-2.0 |
 | clipboard-win | 5.4.1 | BSL-1.0 |
 | codespan-reporting | 0.13.1 | Apache-2.0 |
 | color | 0.3.3 | Apache-2.0 OR MIT |
@@ -185,6 +192,8 @@ Channel lists are fetched at runtime from the public [iptv-org](https://github.c
 | hyper | 1.11.1 | MIT |
 | hyper-rustls | 0.27.10 | Apache-2.0 OR ISC OR MIT |
 | hyper-util | 0.1.21 | MIT |
+| iana-time-zone | 0.1.65 | MIT OR Apache-2.0 |
+| iana-time-zone-haiku | 0.1.2 | MIT OR Apache-2.0 |
 | icu_collections | 2.3.0 | Unicode-3.0 |
 | icu_locale_core | 2.3.0 | Unicode-3.0 |
 | icu_normalizer | 2.3.0 | Unicode-3.0 |
@@ -201,6 +210,11 @@ Channel lists are fetched at runtime from the public [iptv-org](https://github.c
 | ipnet | 2.12.2 | MIT OR Apache-2.0 |
 | itertools | 0.15.0 | MIT OR Apache-2.0 |
 | itoa | 1.0.18 | MIT OR Apache-2.0 |
+| jiff | 0.2.42 | Unlicense OR MIT |
+| jiff-core | 0.1.4 | Unlicense OR MIT |
+| jiff-static | 0.2.42 | Unlicense OR MIT |
+| jiff-tzdb | 0.1.9 | Unlicense OR MIT |
+| jiff-tzdb-platform | 0.1.3 | Unlicense OR MIT |
 | jni | 0.22.4 | MIT OR Apache-2.0 |
 | jni-macros | 0.22.4 | MIT OR Apache-2.0 |
 | jni-sys | 0.3.1 | MIT OR Apache-2.0 |
@@ -438,7 +452,12 @@ Channel lists are fetched at runtime from the public [iptv-org](https://github.c
 | wgpu-hal | 30.0.1 | MIT OR Apache-2.0 |
 | wgpu-naga-bridge | 30.0.1 | MIT OR Apache-2.0 |
 | wgpu-types | 30.0.1 | MIT OR Apache-2.0 |
+| windows-core | 0.62.2 | MIT OR Apache-2.0 |
+| windows-implement | 0.60.2 | MIT OR Apache-2.0 |
+| windows-interface | 0.59.3 | MIT OR Apache-2.0 |
 | windows-link | 0.2.1 | MIT OR Apache-2.0 |
+| windows-result | 0.4.1 | MIT OR Apache-2.0 |
+| windows-strings | 0.5.1 | MIT OR Apache-2.0 |
 | windows-sys | 0.52.0 | MIT OR Apache-2.0 |
 | windows-sys | 0.59.0 | MIT OR Apache-2.0 |
 | windows-sys | 0.60.2 | MIT OR Apache-2.0 |

@@ -13,6 +13,8 @@ you watch a channel, star your favourites and control the volume.
 - **Play** any channel in the built-in player (HLS and most other live formats)
 - **Favourites**: star/unstar channels, dedicated Favourites view
 - **Volume** slider and mute
+- **Record** the channel you are watching, or **schedule** a recording (start time + duration)
+- **Smaller files**: record at Original quality or re-encode to 720p / 480p / 360p / audio-only
 - NSFW channels hidden by default (toggle in settings)
 - Works offline for browsing: the synced list is cached locally
 - Runs on macOS, Windows and Linux
@@ -60,10 +62,10 @@ iptv-org-player/
 
 ## Getting started
 
-Prerequisites: Rust stable (`rustup`) and libmpv.
+Prerequisites: Rust stable (`rustup`), libmpv, and (for recording) ffmpeg.
 
-- macOS: `brew install mpv pkg-config`
-- Debian/Ubuntu: `sudo apt install libmpv-dev`
+- macOS: `brew install mpv pkg-config ffmpeg`
+- Debian/Ubuntu: `sudo apt install libmpv-dev ffmpeg`
 - Windows: mpv dev build (`libmpv-2.dll` + import lib); not tested yet
 
 ```bash
@@ -72,6 +74,30 @@ cargo run --release
 
 On first start click **Sync** to download the channel list (about 30 seconds). Then expand a
 country and click a channel to play it. Click the star to add a favourite.
+
+### Recording
+
+- **⏺ Record** in the player bar records the channel you are watching until you press stop.
+  The quality picker next to it sets the file size trade-off:
+
+  | Preset | What it does | Rough size |
+  |---|---|---|
+  | Original | Copies the stream untouched (`.ts`) | up to ~2-3 GB/h for HD |
+  | Medium 720p | Re-encodes to H.264 720p, 96 kbps audio | ~300-350 MB/h |
+  | Small 480p | 480p, 80 kbps audio | ~200 MB/h |
+  | Tiny 360p | 360p, 48 kbps mono audio | ~40-90 MB/h |
+  | Audio only | AAC 64 kbps (`.m4a`) | ~30 MB/h |
+
+  Re-encoding costs CPU while recording and lowers picture/sound quality. Sizes are
+  estimates and depend on the channel.
+- **Recordings** (top bar) opens the schedule window: pick the channel in the list, then a start
+  date/time, duration and quality. Scheduled recordings run **only while the app is open and the
+  computer is awake**; a window that passed while the app was closed is marked "Missed".
+- Files go to `~/Movies/IPTV-Org Player` (macOS; your Videos folder elsewhere) unless changed in
+  Recordings > Settings. If a stream is dead the recorder automatically tries the channel's next
+  stream.
+- Recording uses your installed **ffmpeg** (found on PATH or in Homebrew locations; set a custom path
+  in Settings). It is not bundled with the app.
 
 ### Keyboard shortcuts
 
