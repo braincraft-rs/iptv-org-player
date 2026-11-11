@@ -13,6 +13,7 @@ you watch a channel, star your favourites and control the volume.
 - **Play** any channel in the built-in player (HLS and most other live formats)
 - **Favourites**: star/unstar channels, dedicated Favourites view
 - **Volume** slider and mute
+- **Picture-in-picture**: shrink the player into a small always-on-top window
 - **Record** the channel you are watching, or **schedule** a recording (start time + duration)
 - **Smaller files**: record at Original quality or re-encode to 720p / 480p / 360p / audio-only
 - NSFW channels hidden by default (toggle in settings)
@@ -75,6 +76,13 @@ cargo run --release
 On first start click **Sync** to download the channel list (about 30 seconds). Then expand a
 country and click a channel to play it. Click the star to add a favourite.
 
+### Picture-in-picture
+
+**⧉ PiP** (or `P`) turns the window into a small borderless player that stays on top of other
+windows, in the bottom-right corner of where the window was. Drag the video to move it, drag the
+bottom-right corner to resize, hover for play/pause, mute and **Restore** (also `Esc` or
+double-click). Playback and recording continue; leaving PiP restores the previous size and position.
+
 ### Recording
 
 - **⏺ Record** in the player bar records the channel you are watching until you press stop.
@@ -107,7 +115,8 @@ country and click a channel to play it. Click the star to add a favourite.
 | M | Mute |
 | Up / Down | Volume +5 / -5 |
 | F or double-click video | Fullscreen |
-| Esc | Leave fullscreen |
+| P or the **⧉ PiP** button | Picture-in-picture |
+| Esc | Leave fullscreen / PiP |
 | / | Search channels |
 
 Data (channel cache, favourites, settings) is stored in a SQLite file in your OS data directory

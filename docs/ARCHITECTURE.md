@@ -282,3 +282,24 @@ If the app starts inside a window that is already running, it records the remain
 
 Fragmented MP4 stays playable even if the process is killed. Videos are never upscaled
 (`min(height, source height)`).
+
+## 11. Picture-in-picture
+
+PiP is a mode of the main window, not a second window: the same GL context keeps drawing the
+mpv texture, so there is no extra decoding or texture copy.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Normal
+    Normal --> PiP: P / PiP button (needs a playing channel)
+    PiP --> Normal: P / Esc / double-click / Restore
+    note right of PiP
+        borderless, always on top, 400x225 (remembered),
+        bottom-right corner of the normal window kept,
+        sidebar/bars hidden, hover controls over video
+    end note
+```
+
+Entering saves the window's size and position; leaving restores them (the position is re-sent for a
+few frames because the window manager moves the window while the title bar comes back).
+Geometry lives in `src/pip.rs` (unit-tested); the window commands are sent from `App`.

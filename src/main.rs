@@ -2,6 +2,7 @@ mod app;
 mod db;
 mod icon;
 mod model;
+mod pip;
 mod player;
 mod record;
 mod sync;

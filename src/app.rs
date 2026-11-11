@@ -8,6 +8,7 @@ use chrono::Local;
 
 use crate::db::{self, Counts, Db, RecordingRow};
 use crate::model::Stream;
+use crate::pip;
 use crate::player::queue::StreamQueue;
 use crate::player::{Player, PlayerStatus, StreamSpec};
 use crate::record::schedule::{Due, Scheduled, Status, due};
@@ -35,6 +36,14 @@ pub struct App {
     last_synced: Option<String>,
     hours_since_sync: Option<f64>,
     fullscreen: bool,
+    pip: bool,
+    pip_saved: Option<pip::Saved>,
+    /// Window position to re-apply for a few frames after leaving PiP: the
+    /// window manager moves the window while it re-adds the title bar.
+    pip_restore_pos: Option<(egui::Pos2, u8)>,
+    pip_size: egui::Vec2,
+    /// Debug hook (IPTV_PIP_DEMO): enter PiP, then leave it again.
+    pip_demo: Option<Instant>,
     show_about: bool,
     sync_rx: Option<Receiver<SyncMsg>>,
     sync_status: String,
@@ -88,6 +97,11 @@ impl App {
             last_synced: None,
             hours_since_sync: None,
             fullscreen: false,
+            pip: false,
+            pip_saved: None,
+            pip_restore_pos: None,
+            pip_size: pip::DEFAULT_SIZE,
+            pip_demo: std::env::var_os("IPTV_PIP_DEMO").map(|_| Instant::now()),
             show_about: false,
             sync_rx: None,
             sync_status: db_err
@@ -287,13 +301,66 @@ impl App {
         self.save_audio_settings();
     }
 
+    /// Shrink the window into a small always-on-top player.
+    fn enter_pip(&mut self, ctx: &egui::Context) {
+        if self.pip || self.now.is_none() {
+            return;
+        }
+        if self.fullscreen {
+            self.set_fullscreen(ctx, false);
+        }
+        let (inner, outer) = ctx.input(|i| (i.viewport().inner_rect, i.viewport().outer_rect));
+        self.pip_saved = Some(pip::Saved {
+            inner_size: inner.map_or(pip::FALLBACK_NORMAL_SIZE, |r| r.size()),
+            outer_pos: outer.map(|r| r.min),
+        });
+        let size = pip::clamp_size(self.pip_size);
+        use egui::{ViewportCommand as Cmd, WindowLevel};
+        ctx.send_viewport_cmd(Cmd::Decorations(false));
+        ctx.send_viewport_cmd(Cmd::WindowLevel(WindowLevel::AlwaysOnTop));
+        ctx.send_viewport_cmd(Cmd::MinInnerSize(pip::MIN_SIZE));
+        ctx.send_viewport_cmd(Cmd::InnerSize(size));
+        if let Some(pos) = pip::pip_position(outer, size) {
+            ctx.send_viewport_cmd(Cmd::OuterPosition(pos));
+        }
+        self.pip = true;
+    }
+
+    /// Back to the normal window, with its previous size and position.
+    fn exit_pip(&mut self, ctx: &egui::Context) {
+        if !self.pip {
+            return;
+        }
+        if let Some(r) = ctx.input(|i| i.viewport().inner_rect) {
+            self.pip_size = pip::clamp_size(r.size()); // remember the size the user chose
+        }
+        let saved = self.pip_saved.take();
+        use egui::{ViewportCommand as Cmd, WindowLevel};
+        ctx.send_viewport_cmd(Cmd::WindowLevel(WindowLevel::Normal));
+        ctx.send_viewport_cmd(Cmd::Decorations(true));
+        ctx.send_viewport_cmd(Cmd::MinInnerSize(pip::NORMAL_MIN_SIZE));
+        ctx.send_viewport_cmd(Cmd::InnerSize(
+            saved.map_or(pip::FALLBACK_NORMAL_SIZE, |s| s.inner_size),
+        ));
+        self.pip_restore_pos = saved.and_then(|s| s.outer_pos).map(|p| (p, 6));
+        self.pip = false;
+    }
+
+    fn toggle_pip(&mut self, ctx: &egui::Context) {
+        if self.pip {
+            self.exit_pip(ctx);
+        } else {
+            self.enter_pip(ctx);
+        }
+    }
+
     fn set_fullscreen(&mut self, ctx: &egui::Context, on: bool) {
         self.fullscreen = on;
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
     }
 
-    /// Space pause, M mute, Up/Down volume, F fullscreen, Esc leave
-    /// fullscreen, / search. Ignored while typing in a text field.
+    /// Space pause, M mute, Up/Down volume, F fullscreen, P picture-in-picture,
+    /// Esc leave fullscreen/PiP, / search. Ignored while typing in a text field.
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         if ctx.egui_wants_keyboard_input() {
             return;
@@ -313,11 +380,18 @@ impl App {
         if pressed(ctx, Key::ArrowDown) {
             self.set_volume_by(-5.0);
         }
-        if pressed(ctx, Key::F) {
+        if pressed(ctx, Key::P) {
+            self.toggle_pip(ctx);
+        }
+        if pressed(ctx, Key::F) && !self.pip {
             self.set_fullscreen(ctx, !self.fullscreen);
         }
-        if pressed(ctx, Key::Escape) && self.fullscreen {
-            self.set_fullscreen(ctx, false);
+        if pressed(ctx, Key::Escape) {
+            if self.pip {
+                self.exit_pip(ctx);
+            } else if self.fullscreen {
+                self.set_fullscreen(ctx, false);
+            }
         }
         if pressed(ctx, Key::Slash) {
             if self.fullscreen {
@@ -359,7 +433,8 @@ impl App {
                         ("M", "Mute"),
                         ("↑ / ↓", "Volume +5 / -5"),
                         ("F or double-click video", "Fullscreen"),
-                        ("Esc", "Leave fullscreen"),
+                        ("P", "Picture-in-picture (small floating player)"),
+                        ("Esc", "Leave fullscreen / PiP"),
                         ("/", "Search channels"),
                     ] {
                         ui.monospace(k);
@@ -718,13 +793,19 @@ impl eframe::App for App {
         self.tick_recordings(ui.ctx());
         let ctx = ui.ctx().clone();
         self.handle_shortcuts(&ctx);
-        self.about_window(&ctx);
-        self.recordings_window(&ctx);
+        self.pip_demo_step(&ctx);
+        self.apply_pending_window_position(&ctx);
+        if !self.pip {
+            self.about_window(&ctx);
+            self.recordings_window(&ctx);
+        }
 
-        if !self.fullscreen {
+        if !self.fullscreen && !self.pip {
             self.top_and_side_panels(ui);
         }
-        self.controls_bar(ui);
+        if !self.pip {
+            self.controls_bar(ui);
+        }
 
         egui::CentralPanel::default().show(ui, |ui| self.video_area(ui, frame));
     }
@@ -872,6 +953,14 @@ impl App {
                 {
                     self.stop();
                 }
+                if ui
+                    .add_enabled(playing, egui::Button::new("⧉ PiP"))
+                    .on_hover_text("Small floating player that stays on top (P)")
+                    .clicked()
+                {
+                    let ctx = ui.ctx().clone();
+                    self.enter_pip(&ctx);
+                }
                 ui.separator();
                 self.record_controls(ui);
                 ui.separator();
@@ -973,21 +1062,27 @@ impl App {
         // Overlay: what is going on.
         let status = p.status().clone();
 
-        if ui
-            .interact(rect, ui.id().with("video"), egui::Sense::click())
-            .double_clicked()
-        {
-            let ctx = ui.ctx().clone();
-            self.set_fullscreen(&ctx, !self.fullscreen);
+        let video = ui.interact(rect, ui.id().with("video"), egui::Sense::click_and_drag());
+        let ctx = ui.ctx().clone();
+        if video.double_clicked() {
+            if self.pip {
+                self.exit_pip(&ctx);
+            } else {
+                self.set_fullscreen(&ctx, !self.fullscreen);
+            }
+        } else if self.pip && video.drag_started() {
+            // Borderless window: drag it by grabbing the video.
+            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
 
         let painter = ui.painter_at(rect);
+        let k = if self.pip { 0.6 } else { 1.0 };
         let text = |y: f32, s: &str, size: f32, color: Color32| {
             painter.text(
                 pos2(rect.center().x, rect.center().y + y),
                 Align2::CENTER_CENTER,
                 s,
-                FontId::proportional(size),
+                FontId::proportional(size * k),
                 color,
             );
         };
@@ -1034,6 +1129,97 @@ impl App {
                 self.start_current();
             }
         }
+        if self.pip {
+            self.pip_overlay(ui, rect);
+        }
+    }
+
+    /// Controls drawn over the video in PiP mode: a hover bar (play/pause, mute,
+    /// back to the normal window), a REC badge, and a resize grip.
+    fn pip_overlay(&mut self, ui: &mut egui::Ui, rect: Rect) {
+        let hovered = ui.rect_contains_pointer(rect);
+        let painter = ui.painter_at(rect);
+        if self.recorder.is_recording() {
+            painter.text(
+                rect.right_top() + vec2(-10.0, 8.0),
+                Align2::RIGHT_TOP,
+                "● REC",
+                FontId::proportional(13.0),
+                Color32::from_rgb(235, 70, 70),
+            );
+        }
+        // Resize grip (bottom-right corner).
+        let grip = Rect::from_min_size(rect.right_bottom() - vec2(18.0, 18.0), vec2(18.0, 18.0));
+        let grip_resp = ui.interact(grip, ui.id().with("pip_grip"), egui::Sense::drag());
+        if grip_resp.hovered() || grip_resp.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+        }
+        if grip_resp.drag_started() {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::BeginResize(
+                    egui::viewport::ResizeDirection::SouthEast,
+                ));
+        }
+        if !hovered {
+            return;
+        }
+        for k in [6.0, 11.0, 16.0] {
+            painter.line_segment(
+                [
+                    grip.right_bottom() - vec2(k, 2.0),
+                    grip.right_bottom() - vec2(2.0, k),
+                ],
+                egui::Stroke::new(1.5, Color32::from_white_alpha(150)),
+            );
+        }
+        let bar = Rect::from_min_max(rect.left_bottom() - vec2(0.0, 36.0), rect.right_bottom());
+        painter.rect_filled(bar, 0.0, Color32::from_black_alpha(170));
+        let btn = |ui: &mut egui::Ui, at: egui::Pos2, label: &str| -> bool {
+            let r =
+                Rect::from_center_size(at, vec2(if label.len() > 4 { 70.0 } else { 34.0 }, 26.0));
+            ui.put(r, egui::Button::new(label).frame(false)).clicked()
+        };
+        let y = bar.center().y;
+        if btn(
+            ui,
+            pos2(bar.left() + 24.0, y),
+            if self.paused { "▶" } else { "⏸" },
+        ) {
+            self.toggle_pause();
+        }
+        if btn(
+            ui,
+            pos2(bar.left() + 60.0, y),
+            if self.muted { "🔇" } else { "🔊" },
+        ) {
+            self.toggle_mute();
+        }
+        let ctx = ui.ctx().clone();
+        if btn(ui, pos2(bar.right() - 52.0, y), "Restore") {
+            self.exit_pip(&ctx);
+        }
+    }
+
+    /// Debug hook (IPTV_PIP_DEMO=1): enter PiP shortly after start, leave it
+    /// again a few seconds later. Used to verify the window round trip.
+    fn apply_pending_window_position(&mut self, ctx: &egui::Context) {
+        if let Some((pos, frames)) = self.pip_restore_pos {
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
+            self.pip_restore_pos = (frames > 1).then_some((pos, frames - 1));
+            ctx.request_repaint_after(Duration::from_millis(60));
+        }
+    }
+
+    fn pip_demo_step(&mut self, ctx: &egui::Context) {
+        let Some(t0) = self.pip_demo else { return };
+        let secs = t0.elapsed().as_secs_f32();
+        if secs > 2.0 && !self.pip && secs < 6.0 {
+            self.enter_pip(ctx);
+        } else if secs > 10.0 && self.pip {
+            self.exit_pip(ctx);
+            self.pip_demo = None;
+        }
+        ctx.request_repaint_after(Duration::from_millis(500));
     }
 }
 
